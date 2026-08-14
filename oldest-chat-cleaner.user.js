@@ -1,14 +1,12 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.3.4
+// @version 4.4.0
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
 // @homepageURL https://github.com/mongkokman91/oldest-chat-cleaner
 // @supportURL https://github.com/mongkokman91/oldest-chat-cleaner/issues
-// @updateURL https://raw.githubusercontent.com/mongkokman91/oldest-chat-cleaner/main/oldest-chat-cleaner.user.js
-// @downloadURL https://raw.githubusercontent.com/mongkokman91/oldest-chat-cleaner/main/oldest-chat-cleaner.user.js
 // @grant none
 // @run-at document-idle
 // ==/UserScript==
