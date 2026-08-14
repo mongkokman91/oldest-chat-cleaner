@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.1.0
+// @version 4.2.0
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
@@ -85,6 +85,10 @@
       .replace(/\s+/g, " ")
       .trim()
       .toLocaleLowerCase();
+  const chatIds = (item) =>
+    [...new Set([item?.conversation_id, item?.id, item?.uuid]
+      .filter(Boolean)
+      .map(String))];
   const readChatGptPinnedIdsFromSidebar = () => {
     const pageLeaves = [...document.body.querySelectorAll("*")].filter(
       (element) => element.children.length === 0,
@@ -204,9 +208,8 @@
           if (id && name) {
             names.set(String(id), {
               name: String(name),
-              count: Number.isFinite(project?.num_interactions)
-                ? project.num_interactions
-                : null,
+              // num_interactions is not a conversation count.
+              count: null,
             });
           }
         }
@@ -248,11 +251,14 @@
         }
         const data = await response.json();
         for (const item of unwrapArray(data, ["items", "conversations"])) {
-          if (!item?.id || seen.has(item.id)) continue;
-          seen.add(item.id);
+          const ids = chatIds(item);
+          const id = ids[0];
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
           const pinState = pinStateFromSidebar(item, sidebarPinnedIds);
           chats.push({
-            id: item.id,
+            id,
+            alternateIds: ids.slice(1),
             title: item.title || "(untitled)",
             createdAt: item.create_time,
             projectId,
@@ -278,7 +284,7 @@
       const chats = [];
       const seen = new Set();
       trace("Stage: loading regular ChatGPT history");
-      for (let offset = 0; offset < 100000; offset += PAGE_SIZE) {
+      for (let offset = 0; offset < 100000; ) {
         onProgress(chats.length);
         const query = new URLSearchParams({
           offset: String(offset),
@@ -299,8 +305,10 @@
         const data = await response.json();
         const items = unwrapArray(data, ["items"]);
         for (const item of items) {
-          if (item?.id && !seen.has(item.id)) {
-            seen.add(item.id);
+          const ids = chatIds(item);
+          const id = ids[0];
+          if (id && !seen.has(id)) {
+            seen.add(id);
             const projectId =
               item.project_id ??
               (String(item.conversation_template_id || "").startsWith("g-p-")
@@ -311,7 +319,8 @@
                 : null);
             const pinState = pinStateFromSidebar(item, sidebarPinnedIds);
             chats.push({
-              id: item.id,
+              id,
+              alternateIds: ids.slice(1),
               title: item.title || "(untitled)",
               createdAt: item.create_time,
               projectId: projectId ? String(projectId) : null,
@@ -328,10 +337,10 @@
         }
         if (
           items.length === 0 ||
-          items.length < PAGE_SIZE ||
           (Number.isFinite(data.total) && chats.length >= data.total)
         )
           break;
+        offset += items.length;
       }
       const catalogIds = new Set(projectNames.keys());
       const regularChats = chats.filter(
@@ -374,11 +383,14 @@
         }
         const data = await response.json();
         for (const item of unwrapArray(data, ["items", "conversations"])) {
-          if (!item?.id || seen.has(item.id)) continue;
-          seen.add(item.id);
+          const ids = chatIds(item);
+          const id = ids[0];
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
           const pinState = pinStateFromSidebar(item, sidebarPinnedIds);
           chats.push({
-            id: item.id,
+            id,
+            alternateIds: ids.slice(1),
             title: item.title || "(untitled)",
             createdAt: item.create_time,
             projectId: group.key,
@@ -392,12 +404,22 @@
       throw new Error(`Exceeded ${MAX_PROJECT_PAGES} pages.`);
     },
     async deleteChat(chat, _contextId, headers, signal) {
-      return fetch(`/backend-api/conversation/${encodeURIComponent(chat.id)}`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ is_visible: false }),
-        signal,
-      });
+      const ids = [chat.id, ...(chat.alternateIds || [])];
+      let lastResponse;
+      for (const id of ids) {
+        lastResponse = await fetch(
+          `/backend-api/conversation/${encodeURIComponent(id)}`,
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ is_visible: false }),
+            signal,
+          },
+        );
+        if (lastResponse.status !== 404) return lastResponse;
+        trace(`Delete candidate returned HTTP 404 for “${chat.title}”; trying ${ids.length > 1 ? "alternate ID" : "no alternate ID available"}.`);
+      }
+      return lastResponse;
     },
   };
   const claudeAdapter = {
