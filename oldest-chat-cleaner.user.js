@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.2.2
+// @version 4.2.3
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
@@ -815,7 +815,11 @@
         deleteHeaders,
         signal,
       );
-      if (response.ok) return;
+      if (response.ok) return { alreadyAbsent: false };
+      if (adapter.platform === "ChatGPT" && response.status === 404) {
+        trace(`Treating stale project entry “${chat.title}” as already absent; continuing.`);
+        return { alreadyAbsent: true };
+      }
       const retryable = response.status === 429 || response.status >= 500;
       if (!retryable || attempt === MAX_RETRIES) {
         throw new Error(`Failed at “${chat.title}” (HTTP ${response.status}).`);
@@ -897,6 +901,7 @@
     previewButton.disabled = true;
     closeButton.textContent = "Close…";
     let deleted = 0;
+    let alreadyAbsent = 0;
     let nextIndex = 0;
     let firstError = null;
     const succeeded = new Set();
@@ -908,10 +913,18 @@
           if (index >= targets.length) return;
           const chat = targets[index];
           try {
-            await deleteWithRetry(chat, contextId, deletionController.signal);
+            const result = await deleteWithRetry(
+              chat,
+              contextId,
+              deletionController.signal,
+            );
             succeeded.add(chat.id);
-            deleted += 1;
-            setStatus(`Deleted ${deleted} of ${targets.length}…`);
+            if (result?.alreadyAbsent) alreadyAbsent += 1;
+            else deleted += 1;
+            setStatus(
+              `Processed ${deleted + alreadyAbsent} of ${targets.length} · ` +
+                `${deleted} deleted · ${alreadyAbsent} already absent`,
+            );
           } catch (error) {
             if (error.name !== "AbortError") firstError ||= error;
           }
@@ -931,14 +944,16 @@
       if (stopRequested) {
         summary.textContent = "Total chats: recount recommended after stopping";
         setStatus(
-          `Stopped. ${deleted} deleted; ${shownTargets.length} displayed chats remain. ` +
+          `Stopped. ${deleted} deleted; ${alreadyAbsent} already absent; ` +
+            `${shownTargets.length} displayed chats remain. ` +
             `A request already received by ${adapter.platform} may still finish.`,
         );
         deleteButton.disabled = shownTargets.length === 0;
       } else {
         summary.textContent = `${activeGroup.name}: deletion finished · reload groups when ready`;
         setStatus(
-          `Done. Deleted ${deleted} only from “${activeGroup.name}”. Click Reload groups when ready.`,
+          `Done. ${deleted} deleted from “${activeGroup.name}”; ` +
+            `${alreadyAbsent} stale entries were already absent. Click Reload groups when ready.`,
         );
       }
     } catch (error) {
@@ -947,7 +962,7 @@
       render(shownRows);
       summary.dataset.counted = "false";
       setStatus(
-        `Deleted ${deleted}, then stopped starting new requests. ${error.message}`,
+        `Deleted ${deleted}; ${alreadyAbsent} already absent; then stopped starting new requests. ${error.message}`,
       );
       deleteButton.disabled = shownTargets.length === 0;
     } finally {
