@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.3.3
+// @version 4.3.4
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
