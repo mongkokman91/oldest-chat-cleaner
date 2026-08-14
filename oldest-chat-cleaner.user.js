@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.2.1
+// @version 4.2.2
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
@@ -89,6 +89,21 @@
     [...new Set([item?.conversation_id, item?.id, item?.uuid]
       .filter(Boolean)
       .map(String))];
+  const describeShape = (value, prefix = "", depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 2) return [];
+    return Object.entries(value).flatMap(([key, child]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (Array.isArray(child)) return [`${path}:array`];
+      if (child && typeof child === "object") {
+        return [`${path}:object`, ...describeShape(child, path, depth + 1)];
+      }
+      const type = child === null ? "null" : typeof child;
+      const idHint = /(^|_)(id|uuid)$|conversation/i.test(key)
+        ? ` (length ${String(child ?? "").length})`
+        : "";
+      return [`${path}:${type}${idHint}`];
+    });
+  };
   const readChatGptPinnedIdsFromSidebar = () => {
     const pageLeaves = [...document.body.querySelectorAll("*")].filter(
       (element) => element.children.length === 0,
@@ -368,6 +383,7 @@
       const seen = new Set();
       const seenCursors = new Set();
       let cursor = "0";
+      let shapeLogged = false;
       for (let page = 0; page < MAX_PROJECT_PAGES; page += 1) {
         if (seenCursors.has(cursor)) {
           throw new Error(`Project “${group.name}” repeated its cursor.`);
@@ -383,6 +399,10 @@
         }
         const data = await response.json();
         for (const item of unwrapArray(data, ["items", "conversations"])) {
+          if (!shapeLogged) {
+            trace(`Project chat response shape: ${describeShape(item).join(", ")}`);
+            shapeLogged = true;
+          }
           const ids = chatIds(item);
           const id = ids[0];
           if (!id || seen.has(id)) continue;
