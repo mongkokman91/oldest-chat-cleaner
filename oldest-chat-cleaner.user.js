@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.3.0
+// @version 4.3.1
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
@@ -23,6 +23,26 @@
   const MAX_CATALOG_PAGES = 100;
   const MAX_PROJECT_PAGES = 1000;
   const diagnosticLines = [];
+  const GHOST_QUARANTINE_KEY = "oldest-chat-cleaner:ghost-quarantine:v1";
+  const readGhostQuarantine = () => {
+    try {
+      const ids = JSON.parse(localStorage.getItem(GHOST_QUARANTINE_KEY) || "[]");
+      return new Set(Array.isArray(ids) ? ids.map(String) : []);
+    } catch {
+      return new Set();
+    }
+  };
+  let ghostQuarantine = readGhostQuarantine();
+  const saveGhostQuarantine = () => {
+    localStorage.setItem(
+      GHOST_QUARANTINE_KEY,
+      JSON.stringify([...ghostQuarantine]),
+    );
+  };
+  const quarantineGhost = (id) => {
+    ghostQuarantine.add(String(id));
+    saveGhostQuarantine();
+  };
   let diagnosticSink = null;
   const trace = (message) => {
     const line = `${new Date().toLocaleTimeString()} — ${message}`;
@@ -406,6 +426,10 @@
           const ids = chatIds(item);
           const id = ids[0];
           if (!id || seen.has(id)) continue;
+          if (ghostQuarantine.has(String(id))) {
+            trace(`Skipped quarantined ghost entry “${item.title || "(untitled)"}”.`);
+            continue;
+          }
           seen.add(id);
           const pinState = pinStateFromSidebar(item, sidebarPinnedIds);
           chats.push({
@@ -520,7 +544,7 @@
   launch.textContent = "Oldest chats";
   const overlay = document.createElement("div");
   overlay.id = "occ-overlay";
-  overlay.innerHTML = ` <section id="occ-panel" role="dialog" aria-modal="true"> <h2>${adapter.platform} oldest chat cleaner</h2> <p>Projects load only when opened. Deletion is limited to the opened group, and pinned chats are protected.</p> <div id="occ-controls"> <label id="occ-context-label">Workspace <select id="occ-context"></select></label> <label>Batch size <input id="occ-count" type="number" min="1" max="500" value="100"></label> <button id="occ-preview">Reload groups</button> <button id="occ-delete" disabled>Delete eligible shown</button> <button id="occ-close">Close</button> </div> <div id="occ-close-choice"> <p>Deletion is running. What should happen?</p> <button id="occ-stop">Stop deletion</button> <button id="occ-continue">Continue in background</button> </div> <div id="occ-status">Open the cleaner to load group names.</div> <div id="occ-summary">Waiting to count…</div> <details><summary>Technical log — click to expand</summary><button id="occ-copy">Copy technical log</button><pre id="occ-diagnostics">Waiting to start…</pre></details> <div id="occ-groups"></div> <table id="occ-list"><thead><tr><th>#</th><th>Created</th><th>Status</th><th>Title</th></tr></thead><tbody></tbody></table> </section>`;
+  overlay.innerHTML = ` <section id="occ-panel" role="dialog" aria-modal="true"> <h2>${adapter.platform} oldest chat cleaner</h2> <p>Projects load only when opened. Deletion is limited to the opened group, and pinned chats are protected.</p> <div id="occ-controls"> <label id="occ-context-label">Workspace <select id="occ-context"></select></label> <label>Batch size <input id="occ-count" type="number" min="1" max="500" value="100"></label> <button id="occ-preview">Reload groups</button> <button id="occ-delete" disabled>Delete eligible shown</button> <button id="occ-reset-ghosts">Reset ghost quarantine (0)</button> <button id="occ-close">Close</button> </div> <div id="occ-close-choice"> <p>Deletion is running. What should happen?</p> <button id="occ-stop">Stop deletion</button> <button id="occ-continue">Continue in background</button> </div> <div id="occ-status">Open the cleaner to load group names.</div> <div id="occ-summary">Waiting to count…</div> <details><summary>Technical log — click to expand</summary><button id="occ-copy">Copy technical log</button><pre id="occ-diagnostics">Waiting to start…</pre></details> <div id="occ-groups"></div> <table id="occ-list"><thead><tr><th>#</th><th>Created</th><th>Status</th><th>Title</th></tr></thead><tbody></tbody></table> </section>`;
   document.body.append(launch, overlay);
   const $ = (selector) => overlay.querySelector(selector);
   const countInput = $("#occ-count");
@@ -529,6 +553,7 @@
   const previewButton = $("#occ-preview");
   const copyButton = $("#occ-copy");
   const deleteButton = $("#occ-delete");
+  const resetGhostsButton = $("#occ-reset-ghosts");
   const closeButton = $("#occ-close");
   const closeChoice = $("#occ-close-choice");
   const stopButton = $("#occ-stop");
@@ -556,9 +581,15 @@
     diagnostics.scrollTop = diagnostics.scrollHeight;
   };
   if (adapter.platform === "ChatGPT") contextLabel.style.display = "none";
+  const updateGhostControl = () => {
+    resetGhostsButton.textContent =
+      `Reset ghost quarantine (${ghostQuarantine.size})`;
+    resetGhostsButton.disabled = ghostQuarantine.size === 0;
+  };
   const setStatus = (message) => {
     status.textContent = message;
   };
+  updateGhostControl();
   const render = (rows) => {
     tbody.replaceChildren(
       ...rows.map((chat, index) => {
@@ -817,7 +848,9 @@
       );
       if (response.ok) return { alreadyAbsent: false };
       if (adapter.platform === "ChatGPT" && response.status === 404) {
-        trace(`Treating stale project entry “${chat.title}” as already absent; continuing.`);
+        quarantineGhost(chat.id);
+        updateGhostControl();
+        trace(`Quarantined stale project entry “${chat.title}” as already absent; continuing.`);
         return { alreadyAbsent: true };
       }
       const retryable = response.status === 429 || response.status >= 500;
@@ -869,6 +902,13 @@
     overlay.style.display = "none";
   });
   previewButton.addEventListener("click", preview);
+  resetGhostsButton.addEventListener("click", () => {
+    ghostQuarantine.clear();
+    saveGhostQuarantine();
+    updateGhostControl();
+    summary.dataset.counted = "false";
+    setStatus("Ghost quarantine cleared. Reload groups to include those entries again.");
+  });
   copyButton.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(diagnosticLines.join("\n"));
