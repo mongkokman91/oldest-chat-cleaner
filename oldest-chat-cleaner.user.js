@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Oldest Chat Cleaner — ChatGPT + Claude
 // @namespace local.oldest-chat-cleaner
-// @version 4.2.0
+// @version 4.2.1
 // @description Lazily preview and delete oldest chat batches by Regular or project group.
 // @match https://chatgpt.com/*
 // @match https://claude.ai/*
@@ -500,7 +500,7 @@
   launch.textContent = "Oldest chats";
   const overlay = document.createElement("div");
   overlay.id = "occ-overlay";
-  overlay.innerHTML = ` <section id="occ-panel" role="dialog" aria-modal="true"> <h2>${adapter.platform} oldest chat cleaner</h2> <p>Projects load only when opened. Deletion is limited to the opened group, and pinned chats are protected.</p> <div id="occ-controls"> <label id="occ-context-label">Workspace <select id="occ-context"></select></label> <label>Batch size <input id="occ-count" type="number" min="1" max="500" value="25"></label> <button id="occ-preview">Reload groups</button> <button id="occ-delete" disabled>Delete eligible shown</button> <button id="occ-close">Close</button> </div> <div id="occ-close-choice"> <p>Deletion is running. What should happen?</p> <button id="occ-stop">Stop deletion</button> <button id="occ-continue">Continue in background</button> </div> <div id="occ-status">Open the cleaner to load group names.</div> <div id="occ-summary">Waiting to count…</div> <details><summary>Technical log</summary><button id="occ-copy">Copy log</button><pre id="occ-diagnostics">Waiting to start…</pre></details> <div id="occ-groups"></div> <table id="occ-list"><thead><tr><th>#</th><th>Created</th><th>Status</th><th>Title</th></tr></thead><tbody></tbody></table> </section>`;
+  overlay.innerHTML = ` <section id="occ-panel" role="dialog" aria-modal="true"> <h2>${adapter.platform} oldest chat cleaner</h2> <p>Projects load only when opened. Deletion is limited to the opened group, and pinned chats are protected.</p> <div id="occ-controls"> <label id="occ-context-label">Workspace <select id="occ-context"></select></label> <label>Batch size <input id="occ-count" type="number" min="1" max="500" value="25"></label> <button id="occ-preview">Reload groups</button> <button id="occ-delete" disabled>Delete eligible shown</button> <button id="occ-close">Close</button> </div> <div id="occ-close-choice"> <p>Deletion is running. What should happen?</p> <button id="occ-stop">Stop deletion</button> <button id="occ-continue">Continue in background</button> </div> <div id="occ-status">Open the cleaner to load group names.</div> <div id="occ-summary">Waiting to count…</div> <details><summary>Technical log — click to expand</summary><button id="occ-copy">Copy technical log</button><pre id="occ-diagnostics">Waiting to start…</pre></details> <div id="occ-groups"></div> <table id="occ-list"><thead><tr><th>#</th><th>Created</th><th>Status</th><th>Title</th></tr></thead><tbody></tbody></table> </section>`;
   document.body.append(launch, overlay);
   const $ = (selector) => overlay.querySelector(selector);
   const countInput = $("#occ-count");
@@ -818,12 +818,21 @@
     summary.dataset.counted = "false";
     preview();
   });
-  closeButton.addEventListener("click", () => {
+  const requestClose = () => {
     if (deleting) {
       closeChoice.style.display = "block";
       return;
     }
     overlay.style.display = "none";
+  };
+  closeButton.addEventListener("click", requestClose);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) requestClose();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || overlay.style.display !== "grid") return;
+    event.preventDefault();
+    requestClose();
   });
   stopButton.addEventListener("click", () => {
     stopRequested = true;
